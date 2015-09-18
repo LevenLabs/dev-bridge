@@ -2,12 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,6 +72,10 @@ func listenPing() {
 			llog.Fatal("error reading from udp port", kv)
 		}
 
+		kv["ip"] = addr.IP
+		kv["body"] = string(b[:n])
+		llog.Debug("udp ping", kv)
+
 		var r router.Route
 		if err := json.Unmarshal(b[:n], &r); err != nil {
 			kv["err"] = err
@@ -102,10 +106,10 @@ func errCouldNotRouteHost(w http.ResponseWriter, kv llog.KV) {
 }
 
 func proxy(w http.ResponseWriter, r *http.Request) {
-	host := r.Header.Get("Host")
+	host := r.Host
 	kv := llog.KV{
 		"host": host,
-		"path": r.URL.Path,
+		"url":  r.URL,
 	}
 	kv["ip"], _, _ = net.SplitHostPort(r.RemoteAddr)
 
@@ -124,10 +128,16 @@ func proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fwdAddr := fmt.Sprintf("%s:%d", rr.IP, rr.Port)
+	fwdAddr := net.JoinHostPort(rr.IP.String(), strconv.Itoa(rr.Port))
 	kv["fwdAddr"] = fwdAddr
 	r.URL.Host = fwdAddr
-	r.Header.Set("Host", strings.TrimPrefix(host, rr.Prefix+"."))
+	r.Host = strings.TrimPrefix(host, rr.Prefix+".")
+
+	if rr.HTTPS {
+		r.URL.Scheme = "https"
+	} else {
+		r.URL.Scheme = "http"
+	}
 
 	reverseProxy.ServeHTTP(w, r)
 }

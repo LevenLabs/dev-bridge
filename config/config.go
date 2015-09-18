@@ -23,7 +23,7 @@ func init() {
 	l.Add(lever.Param{
 		Name:        "--listen-addr",
 		Description: "address to listen for http connections on",
-		Default:     ":8080",
+		Default:     ":8888",
 	})
 	l.Add(lever.Param{
 		Name:        "--ping-addr",
