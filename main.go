@@ -14,9 +14,33 @@ import (
 	"github.com/levenlabs/dev-bridge/config"
 	"github.com/levenlabs/dev-bridge/router"
 	"github.com/levenlabs/go-llog"
+	"github.com/levenlabs/go-srvclient"
+	"github.com/mediocregopher/skyapi/client"
 )
 
 func main() {
+	llog.Info("starting dev-bridge")
+
+	if config.SkyAPIAddr != "" {
+		skyapiAddr, err := srvclient.SRV(config.SkyAPIAddr)
+		if err != nil {
+			llog.Fatal("srv lookup of skyapi failed", llog.KV{"err": err})
+		}
+
+		kv := llog.KV{"skyapiAddr": skyapiAddr}
+		llog.Info("connecting to skyapi", kv)
+
+		go func() {
+			kv["err"] = client.ProvideOpts(client.Opts{
+				SkyAPIAddr:        skyapiAddr,
+				Service:           "dev-bridge",
+				ThisAddr:          config.ListenAddr,
+				ReconnectAttempts: 3,
+			})
+			llog.Fatal("skyapi giving up reconnecting", kv)
+		}()
+	}
+
 	go listenPing()
 
 	kv := llog.KV{"addr": config.ListenAddr}
