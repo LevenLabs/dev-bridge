@@ -28,12 +28,13 @@ vpn:
 }
 ```
 
-dev-bridge, which is accepting on all interfaces, will look at every http
-request it receives. If any have a `Host` which has the prefix `foo.` then they
-will be forwarded to the ip that Foo was sending packets from, on port 80,
-without https, and with the `foo.` prefix stripped from the `Host` header.
+At this point, any requests with a `Host` with the prefix `foo.` will:
+
+* Have the `foo.` prefix stripped from their `Host`
+* Have X-Forwarded-For added/modified to reflect the forwarding
+* Be forwarded to the ip the udp packet came from, on port 80, without ssl (as
+  per the json blob.
 
 ## Other features
 
 * Ability to whitelist `Host` suffixes
-* Adds X-Forwarded-For as requests pass through
