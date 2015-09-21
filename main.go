@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -10,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/net/websocket"
 
 	"github.com/levenlabs/dev-bridge/config"
 	"github.com/levenlabs/dev-bridge/router"
@@ -109,7 +112,7 @@ func proxy(w http.ResponseWriter, r *http.Request) {
 	host := r.Host
 	kv := llog.KV{
 		"host": host,
-		"url":  r.URL,
+		"url":  r.URL.String(),
 	}
 	kv["ip"], _, _ = net.SplitHostPort(r.RemoteAddr)
 
@@ -133,6 +136,21 @@ func proxy(w http.ResponseWriter, r *http.Request) {
 	r.URL.Host = fwdAddr
 	r.Host = strings.TrimPrefix(host, rr.Prefix+".")
 
+	// short-circuit if this is starting a websocket, httputil's reverse proxy
+	// doesn't handle websockets
+	connHeader := strings.ToLower(r.Header.Get("Connection"))
+	upgradeHeader := strings.ToLower(r.Header.Get("Upgrade"))
+	if connHeader == "upgrade" && upgradeHeader == "websocket" {
+		if rr.HTTPS {
+			r.URL.Scheme = "wss"
+		} else {
+			r.URL.Scheme = "ws"
+		}
+		llog.Debug("proxy request is websocket", kv)
+		proxyWS(w, r, kv)
+		return
+	}
+
 	if rr.HTTPS {
 		r.URL.Scheme = "https"
 	} else {
@@ -140,4 +158,40 @@ func proxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reverseProxy.ServeHTTP(w, r)
+}
+
+func proxyWS(w http.ResponseWriter, r *http.Request, kv llog.KV) {
+
+	// reverseProxy would normally do this for us, but we can't use reverseProxy
+	// for websockets :(
+	if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		if xff, ok := r.Header["X-Forwarded-For"]; ok {
+			ip = strings.Join(xff, ", ") + ", " + ip
+		}
+		r.Header.Set("X-Forwarded-For", ip)
+	}
+
+	wsconfig, err := websocket.NewConfig(r.URL.String(), r.Header.Get("Origin"))
+	if err != nil {
+		kv["err"] = err
+		llog.Warn("error generating websocket config", kv)
+		http.Error(w, "error generating websocket config: "+err.Error(), 500)
+		return
+	}
+	for h, vs := range r.Header {
+		wsconfig.Header[h] = vs
+	}
+
+	fwdc, err := websocket.DialConfig(wsconfig)
+	if err != nil {
+		kv["err"] = err
+		llog.Warn("error connecting to websocket server", kv)
+		http.Error(w, "error connecting to websocket server: "+err.Error(), 500)
+		return
+	}
+
+	websocket.Handler(func(c *websocket.Conn) {
+		go io.Copy(c, fwdc)
+		io.Copy(fwdc, c)
+	}).ServeHTTP(w, r)
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/levenlabs/golib/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/websocket"
 )
 
 // testHost pretends to be a test dev machine which has pinged as some random
@@ -24,13 +25,20 @@ func testHost() (string, chan *http.Request) {
 	prefix := testutil.RandStr()
 	ch := make(chan *http.Request, 1)
 
-	server := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("X-Bar", "BAR")
-			ch <- r
-			io.Copy(w, r.Body)
-		},
-	))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Bar", "BAR")
+		ch <- r
+		websocket.Handler(func(c *websocket.Conn) {
+			io.Copy(c, c)
+		}).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Bar", "BAR")
+		ch <- r
+		io.Copy(w, r.Body)
+	})
+	server := httptest.NewServer(mux)
 
 	ipStr, portStr, err := net.SplitHostPort(server.URL[7:])
 	if err != nil {
@@ -103,6 +111,42 @@ func TestXForwardedFor(t *T) {
 
 	resp = httptest.NewRecorder()
 	proxy(resp, r)
+	rr = <-ch
+	assert.Equal(t, "8.8.8.8, 127.0.0.1", rr.Header.Get("X-Forwarded-For"))
+}
+
+func TestWebsockets(t *T) {
+	prefix, ch := testHost()
+	hostSuffix := testutil.RandStr()
+	host := prefix + "." + hostSuffix
+
+	devBridgeServer := httptest.NewServer(http.HandlerFunc(proxy))
+	c, err := net.Dial("tcp", devBridgeServer.URL[7:])
+	require.Nil(t, err)
+
+	wsconfig, err := websocket.NewConfig("ws://"+host+"/ws", "http://"+host+"/")
+	require.Nil(t, err)
+
+	wsc, err := websocket.NewClient(wsconfig, c)
+	require.Nil(t, err)
+
+	rr := <-ch
+	assert.Equal(t, "127.0.0.1", rr.Header.Get("X-Forwarded-For"))
+
+	_, err = wsc.Write([]byte("ohai"))
+	require.Nil(t, err)
+	b := make([]byte, 10)
+	n, err := wsc.Read(b)
+	require.Nil(t, err)
+	assert.Equal(t, []byte("ohai"), b[:n])
+
+	// Do it again, sending an X-Forwarded-For
+	wsconfig.Header.Set("X-Forwarded-For", "8.8.8.8")
+	c, err = net.Dial("tcp", devBridgeServer.URL[7:])
+	require.Nil(t, err)
+	wsc, err = websocket.NewClient(wsconfig, c)
+	require.Nil(t, err)
+
 	rr = <-ch
 	assert.Equal(t, "8.8.8.8, 127.0.0.1", rr.Header.Get("X-Forwarded-For"))
 }
