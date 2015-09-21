@@ -37,7 +37,7 @@ func main() {
 			kv["err"] = client.ProvideOpts(client.Opts{
 				SkyAPIAddr:        skyapiAddr,
 				Service:           "dev-bridge",
-				ThisAddr:          config.ListenAddr,
+				ThisAddr:          config.PingAddr,
 				ReconnectAttempts: 3,
 			})
 			llog.Fatal("skyapi giving up reconnecting", kv)
@@ -91,6 +91,13 @@ func listenPing() {
 	}
 }
 
+var reverseProxyLogger = func() *log.Logger {
+	if llog.GetLevel() == llog.DebugLevel {
+		return nil
+	}
+	return log.New(ioutil.Discard, "", 0)
+}()
+
 var reverseProxy = httputil.ReverseProxy{
 	// Normally the http proxy director would do something, be we do the request
 	// modification beforehand in the proxy function and simply hand-off to
@@ -100,7 +107,7 @@ var reverseProxy = httputil.ReverseProxy{
 	// Unfortunately httputil.ReverseProxy does not have an option to not log
 	// anywhere, so we create a logger to give it which will simply do nothing.
 	// TODO figure out a way to log properly using our format
-	ErrorLog: log.New(ioutil.Discard, "", 0),
+	ErrorLog: reverseProxyLogger,
 }
 
 func errCouldNotRouteHost(w http.ResponseWriter, kv llog.KV) {
