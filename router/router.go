@@ -35,6 +35,11 @@ func init() {
 
 // Pinged adds or updates the given Route's information in the routing table
 func Pinged(r Route) {
+	llog.Debug("Pinged", llog.KV{
+		"prefix": r.Prefix,
+		"port":   r.Port,
+		"ip":     r.IP.String(),
+	})
 	r.lastPing = time.Now()
 	routesL.Lock()
 	defer routesL.Unlock()
